@@ -1,3 +1,4 @@
+from .error import Error
 from .idle import Idle
 from .initialize import Initialize
 from .initiate_step import InitiateStep

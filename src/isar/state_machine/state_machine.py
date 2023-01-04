@@ -8,12 +8,6 @@ from typing import Deque, List, Optional
 
 from alitra import Pose
 from injector import Injector, inject
-from robot_interface.models.initialize.initialize_params import InitializeParams
-from robot_interface.models.mission import StepStatus
-from robot_interface.models.mission.step import Step
-from robot_interface.robot_interface import RobotInterface
-from robot_interface.telemetry.mqtt_client import MqttClientInterface
-from robot_interface.utilities.json_service import EnhancedJSONEncoder
 from transitions import Machine
 from transitions.core import State
 
@@ -28,6 +22,7 @@ from isar.models.communication.queues.queues import Queues
 from isar.models.mission import Mission, Task
 from isar.models.mission.status import MissionStatus, TaskStatus
 from isar.state_machine.states import (
+    Error,
     Idle,
     Initialize,
     InitiateStep,
@@ -37,6 +32,12 @@ from isar.state_machine.states import (
     StopStep,
 )
 from isar.state_machine.states_enum import States
+from robot_interface.models.initialize.initialize_params import InitializeParams
+from robot_interface.models.mission import StepStatus
+from robot_interface.models.mission.step import Step
+from robot_interface.robot_interface import RobotInterface
+from robot_interface.telemetry.mqtt_client import MqttClientInterface
+from robot_interface.utilities.json_service import EnhancedJSONEncoder
 
 
 class StateMachine(object):
@@ -86,8 +87,10 @@ class StateMachine(object):
         self.monitor_state: State = Monitor(self)
         self.initiate_step_state: State = InitiateStep(self)
         self.off_state: State = Off(self)
+        self.error_state: State = Error(self)
 
         self.states: List[State] = [
+            self.error_state,
             self.off_state,
             self.idle_state,
             self.initialize_state,
@@ -113,6 +116,24 @@ class StateMachine(object):
                     "before": self._step_initiated,
                 },
                 {
+                    "trigger": "error",
+                    "source": [
+                        self.initiate_step_state,
+                        self.initialize_state,
+                        self.monitor_state,
+                        self.paused_state,
+                        self.idle_state,
+                    ],
+                    "dest": self.error_state,
+                    "before": self._error,
+                },
+                {
+                    "trigger": "recover",
+                    "source": self.error_state,
+                    "dest": self.idle_state,
+                    "before": self._recover,
+                },
+                {
                     "trigger": "pause",
                     "source": [self.initiate_step_state, self.monitor_state],
                     "dest": self.stop_step_state,
@@ -126,9 +147,7 @@ class StateMachine(object):
                 },
                 {
                     "trigger": "mission_finished",
-                    "source": [
-                        self.initiate_step_state,
-                    ],
+                    "source": self.initiate_step_state,
                     "dest": self.idle_state,
                     "before": self._mission_finished,
                 },
@@ -241,6 +260,12 @@ class StateMachine(object):
         )
 
     def _pause(self) -> None:
+        return
+
+    def _error(self) -> None:
+        return
+
+    def _recover(self) -> None:
         return
 
     def _resume(self) -> None:
