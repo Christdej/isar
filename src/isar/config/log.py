@@ -18,8 +18,8 @@ def setup_loggers(keyvault: Keyvault) -> None:
     with as_file(source) as f:
         log_config = yaml.safe_load(open(f))
 
+    print(f"Loaded log_config: {log_config}")
     logging.config.dictConfig(log_config)
-
     handlers = []
     if settings.LOG_HANDLER_LOCAL_ENABLED:
         handlers.append(configure_console_handler(log_config=log_config))
@@ -28,40 +28,53 @@ def setup_loggers(keyvault: Keyvault) -> None:
             configure_azure_handler(log_config=log_config, keyvault=keyvault)
         )
 
+    print(f"Initialized handlers: {handlers}")
     for log_handler in handlers:
+        if log_handler is None:
+            print("INVALID LOG HANDLER")
+            continue  # Skip invalid handlers
         for loggers in log_config["loggers"].keys():
-            logging.getLogger(loggers).addHandler(log_handler)
-            logging.getLogger(loggers).setLevel(log_levels[loggers])
-        logging.getLogger().addHandler(log_handler)
+            temp_logger = logging.getLogger(loggers)
+            temp_logger.addHandler(log_handler)
+            temp_logger.setLevel(log_levels[loggers])
+        logger = logging.getLogger()
+        logger.addHandler(log_handler)
+    root_logger = logging.getLogger()
+    print(f"Root logger handlers: {root_logger.handlers}")
 
 
 def configure_console_handler(log_config: dict) -> logging.Handler:
-    handler = logging.StreamHandler()
-    handler.setLevel(log_config["root"]["level"])
-    handler.setFormatter(
-        ColourizedFormatter(
-            log_config["formatters"]["colourized"]["format"],
-            style="{",
-            use_colors=True,
+    try:
+        handler = logging.StreamHandler()
+        handler.setLevel(log_config["root"]["level"])
+        handler.setFormatter(
+            ColourizedFormatter(
+                log_config["formatters"]["colourized"]["format"],
+                style="{",
+                use_colors=True,
+            )
         )
-    )
-    return handler
+        return handler
+    except KeyError as e:
+        print(f"Error in console handler configuration: Missing key {e}")
+        return None
 
 
 def configure_azure_handler(log_config: dict, keyvault: Keyvault) -> logging.Handler:
-    connection_string: str
     try:
         connection_string = keyvault.get_secret(
             "application-insights-connection-string"
         ).value
-    except KeyvaultError:
-        message: str = (
+        handler = AzureLogHandler(connection_string=connection_string)
+        handler.setLevel(log_config["root"]["level"])
+        return handler
+    except KeyvaultError as e:
+        message = (
             "CRITICAL ERROR: Missing connection string for"
             f" Application Insights in key vault '{keyvault.name}'."
         )
         print(f"\n{message} \n")
         raise ConfigurationError(message)
-
-    handler = AzureLogHandler(connection_string=connection_string)
-    handler.setLevel(log_config["root"]["level"])
-    return handler
+    except Exception as e:
+        print(f"Error initializing AzureLogHandler: {e}")
+        return None
